@@ -239,8 +239,8 @@ def timer_callback(_obj, _event):
             update_planet_position(r_planet, planet_actor, cnt)
         rotate_axial(planet_actor, r_time, r_planet)
 
-    if cnt == 2000:
-        showm.exit()
+    # if cnt == 2000:
+        # showm.exit()
 
 
 ##############################################################################
