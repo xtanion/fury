@@ -1503,11 +1503,11 @@ def point(points, colors, point_radius=0.1, phi=8, theta=8, opacity=1.):
 
     """
     return sphere(centers=points, colors=colors, radii=point_radius, phi=phi,
-                  theta=theta, vertices=None, faces=None, opacity=opacity)
+                  theta=theta, vertices=None, faces=None, opacity=opacity, prim=False)
 
 
 def sphere(centers, colors, radii=1., phi=16, theta=16,
-           vertices=None, faces=None, opacity=1):
+           vertices=None, faces=None, opacity=1, prim=True):
     """Visualize one or many spheres with different colors and radii
 
     Parameters
@@ -1543,18 +1543,31 @@ def sphere(centers, colors, radii=1., phi=16, theta=16,
     >>> # window.show(scene)
 
     """
-    src = SphereSource() if faces is None else None
+    
+    if not prim:
+        src = SphereSource() if faces is None else None
 
-    if src is not None:
-        src.SetRadius(1)
-        src.SetThetaResolution(theta)
-        src.SetPhiResolution(phi)
+        if src is not None:
+            src.SetRadius(1)
+            src.SetThetaResolution(theta)
+            src.SetPhiResolution(phi)
 
-    actor = repeat_sources(centers=centers, colors=colors,
-                           active_scalars=radii, source=src,
-                           vertices=vertices, faces=faces)
+        actor = repeat_sources(centers=centers, colors=colors,
+                            active_scalars=radii, source=src,
+                            vertices=vertices, faces=faces)
 
-    actor.GetProperty().SetOpacity(opacity)
+        actor.GetProperty().SetOpacity(opacity)
+    else:
+        if opacity<1:
+            warnings.warn('Can not set opacity in primitive type', Warning)
+
+        scales = np.multiply(radii, [1, 1, 1])
+        directions=(1, 0, 0)
+        verts, faces = fp.prim_sphere('symmetric724',True)
+        res = fp.repeat_primitive(verts, faces, directions=directions,
+                              centers=centers, colors=colors, scales=scales)
+        big_verts, big_faces, big_colors, _ = res
+        actor = get_actor_from_primitive(big_verts,big_faces,big_colors)
 
     return actor
 

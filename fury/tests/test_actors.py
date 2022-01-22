@@ -817,14 +817,16 @@ def test_labels(interactive=False):
     npt.assert_equal(scene.GetActors().GetNumberOfItems(), 1)
 
 
-def test_spheres(interactive=False):
+@pytest.mark.parametrize("interactive, prim",[
+    (False, True), (False, False)])
+def test_spheres(interactive, prim):
     xyzr = np.array([[0, 0, 0, 10], [100, 0, 0, 25], [200, 0, 0, 50]])
     colors = np.array([[1, 0, 0, 0.3], [0, 1, 0, 0.4], [0, 0, 1., 0.99]])
     opacity = 0.5
 
     scene = window.Scene()
     sphere_actor = actor.sphere(centers=xyzr[:, :3], colors=colors[:],
-                                radii=xyzr[:, 3], opacity=opacity)
+                                radii=xyzr[:, 3], opacity=opacity, prim=prim)
     scene.add(sphere_actor)
 
     if interactive:
@@ -834,7 +836,8 @@ def test_spheres(interactive=False):
     report = window.analyze_snapshot(arr,
                                      colors=colors)
     npt.assert_equal(report.objects, 3)
-    npt.assert_equal(sphere_actor.GetProperty().GetOpacity(), opacity)
+    if not prim:
+        npt.assert_equal(sphere_actor.GetProperty().GetOpacity(), opacity)
 
     # test with an unique color for all centers
     scene.clear()
