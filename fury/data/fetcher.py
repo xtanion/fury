@@ -327,6 +327,51 @@ async def _download(session, url, filename, size=None):
                     update_progressbar(progress, size)
 
 
+async def _generate_gltf_json(token):
+    """This function generates the JSON file with download links for all models
+
+    Parameter
+    ---------
+    token : str
+        Your Github Token (Required for github API)
+
+    Returns
+    -------
+    file : JSON
+        KhronosGltfSamples.json
+    """
+    header = {'Authorization': 'token ' + token}
+    gltf_data = {'__comments__': 'date, url'}
+
+    async with aiohttp.ClientSession(headers=header) as session:
+        request = await _request(session, GLTF_DATA_URL)
+        names = [model['name'] for model in request if model['size'] == 0]
+        requests = await asyncio.gather(
+            *[_request(session, f'{GLTF_DATA_URL}{name}') for name in names]
+        )
+
+        paths = []
+        for name, request in zip(names, requests):
+            modes = [mode['name'] for mode in request if mode['size'] == 0]
+            names = [f'{name}/{mode}' for mode in modes]
+            paths.extend(names)
+
+        requests = await asyncio.gather(
+            *[_request(session, f'{GLTF_DATA_URL}{path}') for path in paths]
+        )
+
+    for request, path in zip(requests, paths):
+        file_dict = [
+            {
+                'download_url': file['download_url'],
+                'size': file['size']
+                } for file in request]
+        gltf_data[path] = file_dict
+
+    with open('KhronosGltfSamples.json', 'w') as out:
+        out.write(json.dumps(gltf_data, indent=4))
+
+
 async def _fetch_gltf(name, mode):
     """An asynchronous function to fetch glTF samples.
 
