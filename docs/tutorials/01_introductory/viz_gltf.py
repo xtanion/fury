@@ -13,7 +13,7 @@ from fury.data import fetch_gltf, read_viz_gltf
 # Create a scene.
 
 scene = window.Scene()
-scene.SetBackground(0.1, 0.1, 0.4)
+scene.SetBackground(0.8, 0.6, 0.6)
 
 ##############################################################################
 # Retrieving the gltf model.
@@ -32,6 +32,12 @@ actors = gltf_obj.actors()
 # Add all the actor from list of actors to the scene.
 
 scene.add(*actors)
+
+##############################################################################
+# Get the vtkCameraobject using node_id
+
+camera = gltf_obj.cameras[0]
+scene.SetActiveCamera(camera)
 
 interactive = True
 
