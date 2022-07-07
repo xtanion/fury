@@ -345,9 +345,8 @@ class glTF:
         vtk_cam = Camera()
         position = vtk_cam.GetPosition()
         position = np.asarray([position])
-        print(position)
+
         new_position = transform.apply_transfomation(position, transform_mat)
-        print(tuple(new_position[0]))
         vtk_cam.SetPosition(tuple(new_position[0]))
 
         if camera.type == "orthographic":
@@ -364,5 +363,7 @@ class glTF:
             vtk_cam.SetClippingRange(znear, zfar)
             angle = perspective.yfov*180/np.pi if perspective.yfov else 30.0
             vtk_cam.SetViewAngle(angle)
+            if perspective.aspectRatio:
+                vtk_cam.SetExplicitAspectRatio(perspective.aspectRatio)
 
         self.cameras[camera_id] = vtk_cam
