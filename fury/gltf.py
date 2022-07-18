@@ -182,7 +182,10 @@ class glTF:
 
             if primitive.indices is not None:
                 indices = self.get_acc_data(primitive.indices).reshape(-1, 3)
-                utils.set_polydata_triangles(polydata, indices)
+            else:
+                indices = np.arange(0, len(vertices)).reshape((-1, 3))
+    
+            utils.set_polydata_triangles(polydata, indices)
 
             material = None
             if primitive.material is not None:
