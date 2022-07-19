@@ -184,7 +184,7 @@ class glTF:
                 indices = self.get_acc_data(primitive.indices).reshape(-1, 3)
             else:
                 indices = np.arange(0, len(vertices)).reshape((-1, 3))
-    
+
             utils.set_polydata_triangles(polydata, indices)
 
             material = None
@@ -478,14 +478,29 @@ def _connect_primitives(gltf, actor, buff_file, boffset, count, name):
         polydata = utils.set_polydata_colors(polydata, colors)
 
     vertices = utils.get_polydata_vertices(polydata)
-    indices = utils.get_polydata_triangles(polydata)
+    tcoords = utils.get_polydata_tcoord(polydata)
     colors = utils.get_polydata_colors(polydata)
     normals = utils.get_polydata_normals(polydata)
-    tcoords = utils.get_polydata_tcoord(polydata)
+    try:
+        indices = utils.get_polydata_triangles(polydata)
+    except AssertionError as error:
+        indices = None
+        print(error)
+
+    ispoints = polydata.GetNumberOfVerts()
+    islines = polydata.GetNumberOfLines()
+    istraingles = polydata.GetNumberOfPolys()
+
+    if ispoints:
+        mode = 0
+    elif islines:
+        mode = 1
+    elif istraingles:
+        mode = 4
 
     vertex, index, normal, tcoord, color = (None, None, None,
                                             None, None)
-    if indices is not None:
+    if indices is not None and len(indices) != 0:
         indices = indices.reshape((-1, ))
         amax = [np.max(indices)]
         amin = [np.min(indices)]
@@ -580,7 +595,7 @@ def _connect_primitives(gltf, actor, buff_file, boffset, count, name):
         color = count
         count += 1
     material = None if tcoords is None else 0
-    prim = get_prim(vertex, index, color, tcoord, normal, material)
+    prim = get_prim(vertex, index, color, tcoord, normal, material, mode)
     return prim, boffset, count
 
 
@@ -664,7 +679,7 @@ def write_camera(gltf, camera):
     gltf.cameras.append(cam)
 
 
-def get_prim(verts, indices, cols, tcoords, normals, mat):
+def get_prim(verts, indices, cols, tcoords, normals, mat, mode=4):
     """Return a Primitive object.
 
     Parameters
@@ -681,6 +696,9 @@ def get_prim(verts, indices, cols, tcoords, normals, mat):
         Accessor index for the normals data.
     mat : int
         Materials index.
+    mode : int, optional
+        The topology type of primitives to render.
+        Default: 4
 
     Returns
     -------
@@ -697,6 +715,7 @@ def get_prim(verts, indices, cols, tcoords, normals, mat):
     prim.indices = indices
     if mat is not None:
         prim.material = mat
+    prim.mode = mode
     return prim
 
 
