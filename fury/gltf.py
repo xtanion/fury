@@ -58,6 +58,7 @@ class glTF:
         self.actors_list = []
         self.materials = []
         self.polydatas = []
+        self.modes = []
         self.init_transform = np.identity(4)
         self.inspect_scene(0)
 
@@ -159,12 +160,21 @@ class glTF:
         for primitive in primitives:
 
             attributes = primitive.attributes
+            prim_mode = primitive.mode
+            self.modes.append(prim_mode)
+            print(f'Modes: {self.modes}')
 
             vertices = self.get_acc_data(attributes.POSITION)
             vertices = transform.apply_transfomation(vertices, transform_mat)
 
             polydata = utils.PolyData()
             utils.set_polydata_vertices(polydata, vertices)
+            if prim_mode == 1 or prim_mode == 2:
+                vtk_cell_array = utils.numpy_to_vtk_cells(vertices)
+                polydata.SetLines(vtk_cell_array)
+            if prim_mode == 0:
+                vtk_cell_array = utils.numpy_to_vtk_cells(vertices)
+                polydata.SetVerts(vtk_cell_array)
 
             if attributes.NORMAL is not None and self.apply_normals:
                 normals = self.get_acc_data(attributes.NORMAL)
