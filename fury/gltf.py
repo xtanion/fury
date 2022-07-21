@@ -4,8 +4,8 @@ import os
 import numpy as np
 import pygltflib as gltflib
 from pygltflib.utils import glb2gltf
-from fury.lib import Texture, Camera
-from fury import transform, utils, io
+from fury.lib import Texture, Camera, Points, CellArray
+from fury import transform, utils, io, actor
 
 
 comp_type = {
@@ -162,7 +162,6 @@ class glTF:
             attributes = primitive.attributes
             prim_mode = primitive.mode
             self.modes.append(prim_mode)
-            print(f'Modes: {self.modes}')
 
             vertices = self.get_acc_data(attributes.POSITION)
             vertices = transform.apply_transfomation(vertices, transform_mat)
@@ -170,11 +169,16 @@ class glTF:
             polydata = utils.PolyData()
             utils.set_polydata_vertices(polydata, vertices)
             if prim_mode == 1 or prim_mode == 2:
-                vtk_cell_array = utils.numpy_to_vtk_cells(vertices)
-                polydata.SetLines(vtk_cell_array)
+                lines = actor.line([vertices])
+                polydata = lines.GetMapper().GetInput()
             if prim_mode == 0:
-                vtk_cell_array = utils.numpy_to_vtk_cells(vertices)
-                polydata.SetVerts(vtk_cell_array)
+                vtk_vertices = Points()
+                vtk_faces = CellArray()
+                for vertex in vertices:
+                    idd = vtk_vertices.InsertNextPoint(vertex)
+                    vtk_faces.InsertNextCell(1)
+                    vtk_faces.InsertCellPoint(idd)
+                polydata.SetVerts(vtk_faces)
 
             if attributes.NORMAL is not None and self.apply_normals:
                 normals = self.get_acc_data(attributes.NORMAL)
