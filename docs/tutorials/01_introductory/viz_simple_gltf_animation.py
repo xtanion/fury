@@ -18,10 +18,14 @@ filename = read_viz_gltf('BoxAnimated')
 
 gltf_obj = glTF(filename)
 actors = gltf_obj.actors()
+
+# simplyfy the example, add the followingcode to a function indide the glTF 
+# object.
 transforms = gltf_obj.node_transform
 nodes = gltf_obj.nodes
 
 print(len(actors))
+print(nodes)
 
 main_timeline = Timeline(playback_panel=True)
 
