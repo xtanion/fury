@@ -30,7 +30,8 @@ for transform in transforms:
     for i, node_list in enumerate(nodes):
         if target_node in node_list:
             print(i)
-            timeline = Timeline(actors[i])
+            timeline = Timeline()
+            timeline.add_actor(actors[i])
 
             timeframes = transform['input']
             transforms = transform['output']
@@ -38,13 +39,13 @@ for transform in transforms:
             print(prop)
 
             for time, node_tran in zip(timeframes, transforms):
-                
+
                 if prop == 'rotation':
                     rot = Rotation.from_quat(node_tran)
                     rot_euler = rot.as_euler('xyz', degrees=True)
                     timeline.set_rotation(time[0], rot_euler)
                 if prop == 'translation':
-                    print('chaning position')
+                    print(time[0])
                     timeline.set_position(time[0], node_tran)
 
             timeline.set_position_interpolator(LinearInterpolator)
@@ -52,6 +53,8 @@ for transform in transforms:
             main_timeline.add_timeline(timeline)
         else:
             main_timeline.add_static_actor(actors[i])
+
+scene.add(main_timeline)
 
 
 def timer_callback(_obj, _event):
