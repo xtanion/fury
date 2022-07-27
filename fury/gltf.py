@@ -21,7 +21,8 @@ acc_type = {
     'SCALAR': 1,
     'VEC2': 2,
     'VEC3': 3,
-    'VEC4': 4
+    'VEC4': 4,
+    'MAT4': 16
 }
 
 
@@ -150,6 +151,10 @@ class glTF:
         if node.camera is not None:
             camera_id = node.camera
             self.load_camera(camera_id, next_matrix)
+
+        if node.skin is not None:
+            skin_id = node.skin
+            self.get_skin_data(skin_id)
 
         if node.children:
             for child_id in node.children:
@@ -456,3 +461,9 @@ class glTF:
             'output': transform_array,
             'interpolation': interpolation,
             'property': transform_type}
+
+    def get_skin_data(self, skin_id):
+        skin = self.gltf.skins[skin_id]
+        inv_bind_matrix = self.get_acc_data(skin.inverseBindMatrices)
+        inv_bind_matrix = inv_bind_matrix.reshape((-1, 4, 4))
+        print(inv_bind_matrix)
