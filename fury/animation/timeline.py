@@ -1,7 +1,9 @@
 import time
+import warnings
+
 import numpy as np
 from scipy.spatial import transform
-from fury import utils
+from fury import utils, actor
 from fury.actor import Container
 from fury.animation.interpolator import LinearInterpolator, SplineInterpolator
 from fury.ui.elements import PlaybackPanel
@@ -20,7 +22,9 @@ class Timeline(Container):
     main keyframes.
     """
 
-    def __init__(self, actors=None, playback_panel=False):
+    def __init__(self, actors=None, playback_panel=False, length=None,
+                 motion_path_res=0):
+
         super().__init__()
         self._data = {
             'keyframes': {
@@ -42,6 +46,7 @@ class Timeline(Container):
         self._scene = None
         self._last_started_time = 0
         self._playing = False
+        self._length = length
         self._final_timestamp = 0
         self._needs_update = False
         self._reverse_playing = False
@@ -50,6 +55,8 @@ class Timeline(Container):
         self._add_to_scene_time = 0
         self._remove_from_scene_time = None
         self._is_camera_animated = False
+        self.motion_path_res = motion_path_res
+        self._motion_path_actor = None
 
         # Handle actors while constructing the timeline.
         if playback_panel:
@@ -79,13 +86,44 @@ class Timeline(Container):
         float
             final timestamp that can be reached inside the Timeline.
         """
-
-        self._final_timestamp = max(self._final_timestamp,
-                                    max([0] + [tl.update_final_timestamp() for
-                                               tl in self.timelines]))
+        if self._length is None:
+            self._final_timestamp = max(self.final_timestamp,
+                                        max([0] + [tl.update_final_timestamp()
+                                                   for tl in self.timelines]))
+        else:
+            self._final_timestamp = self._length
         if self.has_playback_panel:
             self.playback_panel.final_time = self._final_timestamp
         return self._final_timestamp
+
+    def update_motion_path(self, res=None):
+        if res is None:
+            res = self.motion_path_res
+        lines = []
+        colors = []
+        if self.is_interpolatable('position'):
+            ts = np.linspace(0, self.final_timestamp, res)
+            [lines.append(self.get_position(t).tolist()) for t in ts]
+            if self.is_interpolatable('color'):
+                [colors.append(self.get_color(t)) for t in ts]
+            elif len(self.items) == 1:
+                colors = sum([i.vcolors[0] / 255 for i in self.items]) / \
+                         len(self.items)
+            else:
+                colors = [1, 1, 1]
+        if len(lines) > 0:
+            lines = np.array([lines])
+            if colors is []:
+                colors = np.array([colors])
+
+            mpa = actor.line(lines, colors=colors, opacity=0.6)
+            if self._scene:
+                # remove old motion path actor
+                if self._motion_path_actor is not None:
+                    self._scene.rm(self._motion_path_actor)
+                self._scene.add(mpa)
+            self._motion_path_actor = mpa
+        [tl.update_motion_path(res) for tl in self.timelines]
 
     def set_timestamp(self, timestamp):
         """Set the current timestamp of the animation.
@@ -152,6 +190,7 @@ class Timeline(Container):
 
         if timestamp > 0:
             self.update_animation(force=True)
+        self.update_motion_path()
 
     def set_keyframes(self, attrib, keyframes, is_camera=False):
         """Set multiple keyframes for a certain attribute.
@@ -500,17 +539,30 @@ class Timeline(Container):
         """
         self.set_keyframes('position', keyframes)
 
-    def set_rotation(self, timestamp, euler):
+    def set_rotation(self, timestamp, rotation, ):
         """Set a rotation keyframe at a specific timestamp.
 
         Parameters
         ----------
         timestamp: float
             Timestamp of the keyframe
-        euler: ndarray, shape(1, 3)
-            Euler angles that describe the rotation.
+        rotation: ndarray, shape(1, 3) or shape(1, 4)
+            Rotation data in euler degrees with shape(1, 3) or in quaternions
+            with shape(1, 4).
         """
-        self.set_keyframe('rotation', timestamp, euler)
+        no_components = len(np.array(rotation).flatten())
+        if no_components == 4:
+            self.set_keyframe('rotation', timestamp, rotation)
+        elif no_components == 3:
+            # user is expected to set rotation order by default as setting
+            # orientation of a `vtkActor` z->x->y.
+            rotation = transform.Rotation.from_euler('zxy',
+                                                     rotation[[2, 0, 1]],
+                                                     degrees=True).as_quat()
+            self.set_keyframe('rotation', timestamp, rotation)
+        else:
+            warnings.warn(f'Keyframe with {no_components} components is not a '
+                          f'valid rotation data. Skipped!')
 
     def set_rotation_as_vector(self, timestamp, vector):
         """Set a rotation keyframe at a specific timestamp.
@@ -628,7 +680,10 @@ class Timeline(Container):
         ndarray(1, 3):
             The interpolated rotation.
         """
-        return self.get_value('rotation', t)
+        q = self.get_value('rotation', t)
+        r = transform.Rotation.from_quat(q)
+        degrees = r.as_euler('zxy', degrees=True)[[1, 2, 0]]
+        return degrees
 
     def get_scale(self, t):
         """Returns the interpolated scale.
@@ -1067,6 +1122,8 @@ class Timeline(Container):
     def play(self):
         """Play the animation"""
         if not self.playing:
+            if self.current_timestamp >= self.final_timestamp:
+                self.current_timestamp = 0
             self.update_final_timestamp()
             self._last_started_time = \
                 time.perf_counter() - self._last_timestamp / self.speed
@@ -1249,3 +1306,5 @@ class Timeline(Container):
         self._scene = ren
         self._added_to_scene = True
         self.update_animation(force=True)
+        if self._motion_path_actor:
+            ren.add(self._motion_path_actor)
