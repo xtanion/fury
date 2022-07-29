@@ -2,7 +2,7 @@ from scipy.spatial.transform import Rotation
 from fury import window
 from fury.animation.timeline import Timeline
 from fury.animation.interpolator import (LinearInterpolator, StepInterpolator,
-                                         CubicSplineInterpolator)
+                                         CubicSplineInterpolator, Slerp)
 from fury.gltf import glTF
 from fury.data import fetch_gltf, read_viz_gltf
 
@@ -19,10 +19,14 @@ filename = read_viz_gltf('InterpolationTest')
 gltf_obj = glTF(filename)
 actors = gltf_obj.actors()
 
+print(len(actors))
+
 # simplyfy the example, add the followingcode to a function indide the glTF
 # object.
 transforms = gltf_obj.node_transform
 nodes = gltf_obj.nodes
+
+print(nodes)
 
 interpolator = {
     'LINEAR': LinearInterpolator,
@@ -47,17 +51,15 @@ for transform in transforms:
             for time, node_tran in zip(timeframes, transforms):
 
                 if prop == 'rotation':
-                    rot = Rotation.from_quat(node_tran)
-                    rot_euler = rot.as_euler('xyz', degrees=True)
-                    # print(rot_euler)
-                    timeline.set_rotation(time[0], rot_euler)
+                    timeline.set_rotation(time[0], node_tran)
                 if prop == 'translation':
+                    print(node_tran)
                     timeline.set_position(time[0], node_tran)
                 if prop == 'scale':
                     timeline.set_scale(time[0], node_tran)
 
             timeline.set_position_interpolator(interp)
-            timeline.set_rotation_interpolator(interp)
+            timeline.set_rotation_interpolator(Slerp)
             timeline.set_scale_interpolator(interp)
             main_timeline.add_timeline(timeline)
         else:

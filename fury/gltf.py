@@ -76,6 +76,10 @@ class glTF:
         """
         for i, polydata in enumerate(self.polydatas):
             actor = utils.get_actor_from_polydata(polydata)
+            # set orientation in vtk zxy (as_euler('zxy')[[1, 2, 0]])
+            # maybe we can use SetuserMatrix
+            # https://vtk.org/doc/nightly/html/classvtkProp3D.html
+            # TODO: apply transformations here.
 
             if self.materials[i] is not None:
                 base_col_tex = self.materials[i]['baseColorTexture']
