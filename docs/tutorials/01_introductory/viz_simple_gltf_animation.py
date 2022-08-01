@@ -1,4 +1,3 @@
-from scipy.spatial.transform import Rotation
 from fury import window
 from fury.animation.timeline import Timeline
 from fury.animation.interpolator import (LinearInterpolator, StepInterpolator,

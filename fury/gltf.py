@@ -6,7 +6,9 @@ import pygltflib as gltflib
 from pygltflib.utils import glb2gltf
 from fury.lib import Texture, Camera
 from fury import transform, utils, io
-
+from fury.animation.timeline import Timeline
+from fury.animation.interpolator import (LinearInterpolator, StepInterpolator,
+                                         CubicSplineInterpolator, Slerp)
 
 comp_type = {
     5120: {'size': 1, 'dtype': np.byte},
@@ -59,6 +61,7 @@ class glTF:
         self.actors_list = []
         self.materials = []
         self.nodes = []
+        self.transformations = []
         self.polydatas = []
         self.init_transform = np.identity(4)
         self.animations = []
@@ -429,6 +432,7 @@ class glTF:
         animation : glTflib.Animation
             pygltflib animation object.
         """
+        name = animation.name
         for channel in animation.channels:
             sampler = animation.samplers[channel.sampler]
             node_id = channel.target.node
@@ -471,3 +475,66 @@ class glTF:
         inv_bind_matrix = self.get_acc_data(skin.inverseBindMatrices)
         inv_bind_matrix = inv_bind_matrix.reshape((-1, 4, 4))
         print(inv_bind_matrix)
+
+    def get_animation_timelines(self):
+        """Returns list of animation timeline.
+
+        Returns
+        -------
+        timelines : List
+            List of timelines containing actors.
+        """
+        actors = self.actors()
+        interpolators = {
+            'LINEAR': LinearInterpolator,
+            'STEP': StepInterpolator,
+            'CUBICSPLINE': LinearInterpolator
+        }
+
+        rotation_interpolators = {
+            'LINEAR': Slerp,
+            'STEP': StepInterpolator,
+            'CUBICSPLINE': LinearInterpolator
+        }
+
+        timelines = []
+        for transforms in self.node_transform:
+            target_node = transforms['node']
+            for i, nodes in enumerate(self.nodes):
+                timeline = Timeline()
+
+                if target_node in nodes:
+                    timeline.add_actor(actors[i])
+                    timestamp = transforms['input']
+                    transform = transforms['output']
+                    prop = transforms['property']
+                    interpolation_type = transforms['interpolation']
+
+                    interpolator = interpolators.get(interpolation_type)
+                    rot_interpolator = rotation_interpolators.get(
+                                       interpolation_type)
+
+                    for time, trs in zip(timestamp, transform):
+                        if prop == 'rotation':
+                            timeline.set_rotation(time[0], trs)
+                        if prop == 'translation':
+                            timeline.set_position(time[0], trs)
+                        if prop == 'scale':
+                            timeline.set_scale(time[0], trs)
+                    timeline.set_position_interpolator(interpolator)
+                    timeline.set_scale_interpolator(interpolator)
+                    timeline.set_rotation_interpolator(rot_interpolator)
+                else:
+                    timeline.add_static_actor(actors[i])
+
+                timelines.append(timeline)
+        return timelines
+
+    def get_main_timeline(self):
+        """Returns main timeline with all animations.
+        """
+        main_timeline = Timeline(playback_panel=True)
+        timelines = self.get_animation_timelines()
+        for timeline in timelines:
+            main_timeline.add_timeline(timeline)
+        return main_timeline
