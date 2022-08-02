@@ -83,6 +83,15 @@ class glTF:
             # maybe we can use SetuserMatrix
             # https://vtk.org/doc/nightly/html/classvtkProp3D.html
             # TODO: apply transformations here.
+            transform_mat = self.transformations[i]
+            # print(transform_mat)
+
+            # the fillipi method
+            vertices = utils.vertices_from_actor(actor)
+            vertices[:] = transform.apply_transfomation(
+                vertices, transform_mat)
+            utils.update_actor(actor)
+            utils.compute_bounds(actor)
 
             if self.materials[i] is not None:
                 base_col_tex = self.materials[i]['baseColorTexture']
@@ -185,7 +194,8 @@ class glTF:
             attributes = primitive.attributes
 
             vertices = self.get_acc_data(attributes.POSITION)
-            vertices = transform.apply_transfomation(vertices, transform_mat)
+            # vertices = transform.apply_transfomation(vertices, transform_mat)
+            self.transformations.append(transform_mat)
 
             polydata = utils.PolyData()
             utils.set_polydata_vertices(polydata, vertices)

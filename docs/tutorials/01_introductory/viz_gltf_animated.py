@@ -22,8 +22,8 @@ showm.initialize()
 
 ##############################################################################
 # Retrieving the gltf model.
-fetch_gltf('BoxAnimated', 'glTF')
-filename = read_viz_gltf('BoxAnimated')
+fetch_gltf('InterpolationTest', 'glTF')
+filename = read_viz_gltf('InterpolationTest')
 
 ##############################################################################
 # Initialize the glTF object and get actors using `actors` method.

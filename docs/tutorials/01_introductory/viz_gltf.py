@@ -13,12 +13,11 @@ from fury.data import fetch_gltf, read_viz_gltf
 # Create a scene.
 
 scene = window.Scene()
-scene.SetBackground(0.1, 0.1, 0.4)
 
 ##############################################################################
 # Retrieving the gltf model.
-fetch_gltf('CesiumMan', 'glTF')
-filename = read_viz_gltf('CesiumMan')
+fetch_gltf('CesiumMilkTruck', 'glTF')
+filename = read_viz_gltf('CesiumMilkTruck')
 
 ##############################################################################
 # Initialize the glTF object and get actors using `actors` method.
