@@ -4,7 +4,7 @@ import os
 import numpy as np
 import pygltflib as gltflib
 from pygltflib.utils import glb2gltf
-from fury.lib import Texture, Camera
+from fury.lib import Texture, Camera, Transform
 from fury import transform, utils, io
 from fury.animation.timeline import Timeline
 from fury.animation.interpolator import (LinearInterpolator, StepInterpolator,
@@ -84,14 +84,17 @@ class glTF:
             # https://vtk.org/doc/nightly/html/classvtkProp3D.html
             # TODO: apply transformations here.
             transform_mat = self.transformations[i]
-            # print(transform_mat)
 
-            # the fillipi method
-            vertices = utils.vertices_from_actor(actor)
-            vertices[:] = transform.apply_transfomation(
-                vertices, transform_mat)
-            utils.update_actor(actor)
-            utils.compute_bounds(actor)
+            # the fillipi method (doesn't work, same as pre-applying transform)
+            # vertices = utils.vertices_from_actor(actor)
+            # vertices[:] = transform.apply_transfomation(
+            #     vertices, transform_mat)
+            # utils.update_actor(actor)
+            # utils.compute_bounds(actor)
+
+            vtk_transform = Transform()
+            vtk_transform.SetMatrix(utils.numpy_to_vtk_matrix(transform_mat))
+            actor.SetUserTransform(vtk_transform)
 
             if self.materials[i] is not None:
                 base_col_tex = self.materials[i]['baseColorTexture']
