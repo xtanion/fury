@@ -1,11 +1,13 @@
 import time
 import warnings
+import inspect
+from collections import defaultdict
 
 import numpy as np
 from scipy.spatial import transform
 from fury import utils, actor
 from fury.actor import Container
-from fury.animation.interpolator import LinearInterpolator, SplineInterpolator
+from fury.animation.interpolator import LinearInterpolator
 from fury.ui.elements import PlaybackPanel
 from fury.lib import Actor
 
@@ -20,22 +22,30 @@ class Timeline(Container):
     It also accepts custom data and interpolates them, such as temperature.
     Linear interpolation is used by default to interpolate data between the
     main keyframes.
+
+    Attributes
+    ----------
+    actors : str
+        a formatted string to print out what the animal says
+    playback_panel : bool, optional
+        If True, the timeline will have a playback panel set, which can be used
+        to control the playback of the timeline.
+    length : float or int, default: None, optional
+        the fixed length of the timeline. If set to None, the timeline will get
+         its length from the keyframes.
+    loop : bool, optional
+        the number of legs the animal has (default 4)
+    motion_path_res : int, default: None
+        the number of line segments used to visualizer the timeline's motion
+         path.
     """
 
     def __init__(self, actors=None, playback_panel=False, length=None,
-                 motion_path_res=0):
+                 loop=False, motion_path_res=None):
 
         super().__init__()
-        self._data = {
-            'keyframes': {
-                'attribs': {},
-                'camera': {}
-            },
-            'interpolators': {
-                'attribs': {},
-                'camera': {}
-            }
-        }
+        self._data = defaultdict(dict)
+        self._camera_data = defaultdict(dict)
         self.playback_panel = None
         self._last_timestamp = 0
         self._current_timestamp = 0
@@ -50,13 +60,14 @@ class Timeline(Container):
         self._final_timestamp = 0
         self._needs_update = False
         self._reverse_playing = False
-        self._loop = False
+        self._loop = loop
         self._added_to_scene = True
         self._add_to_scene_time = 0
         self._remove_from_scene_time = None
         self._is_camera_animated = False
-        self.motion_path_res = motion_path_res
+        self._motion_path_res = motion_path_res
         self._motion_path_actor = None
+        self._parent_timeline = None
 
         # Handle actors while constructing the timeline.
         if playback_panel:
@@ -66,7 +77,7 @@ class Timeline(Container):
             def set_speed(speed):
                 self.speed = speed
 
-            self.playback_panel = PlaybackPanel()
+            self.playback_panel = PlaybackPanel(loop=self._loop)
             self.playback_panel.on_play = self.play
             self.playback_panel.on_stop = self.stop
             self.playback_panel.on_pause = self.pause
@@ -96,9 +107,14 @@ class Timeline(Container):
             self.playback_panel.final_time = self._final_timestamp
         return self._final_timestamp
 
-    def update_motion_path(self, res=None):
-        if res is None:
-            res = self.motion_path_res
+    def update_motion_path(self):
+        res = self._motion_path_res
+        tl = self
+        while not res and isinstance(tl._parent_timeline, Timeline):
+            tl = tl._parent_timeline
+            res = tl._motion_path_res
+        if not res:
+            return
         lines = []
         colors = []
         if self.is_interpolatable('position'):
@@ -123,7 +139,6 @@ class Timeline(Container):
                     self._scene.rm(self._motion_path_actor)
                 self._scene.add(mpa)
             self._motion_path_actor = mpa
-        [tl.update_motion_path(res) for tl in self.timelines]
 
     def set_timestamp(self, timestamp):
         """Set the current timestamp of the animation.
@@ -139,8 +154,29 @@ class Timeline(Container):
         else:
             self._last_timestamp = timestamp
 
-    def set_keyframe(self, attrib, timestamp, value, pre_cp=None,
-                     post_cp=None, is_camera=False):
+    def _get_data(self, is_camera=False):
+        if is_camera:
+            self._is_camera_animated = True
+            return self._camera_data
+        else:
+            return self._data
+
+    def _get_attribute_data(self, attrib, is_camera=False):
+        data = self._get_data(is_camera=is_camera)
+
+        if attrib not in data:
+            data[attrib] = {
+                'keyframes': defaultdict(dict),
+                'interpolator': {
+                    'base': LinearInterpolator,
+                    'func': None,
+                    'args': defaultdict()
+                },
+            }
+        return data.get(attrib)
+
+    def set_keyframe(self, attrib, timestamp, value, is_camera=False,
+                     update_interpolator=True, **kwargs):
         """Set a keyframe for a certain attribute.
 
         Parameters
@@ -151,36 +187,40 @@ class Timeline(Container):
             Timestamp of the keyframe.
         value: ndarray
             Value of the keyframe at the given timestamp.
-        is_camera: bool
+        is_camera: bool, optional
             Indicated whether setting a camera property or general property.
+        update_interpolator: bool, optional
+            Interpolator will be reinitialized if Ture
+
+        Other Parameters
+        ----------------
         pre_cp: ndarray, shape (1, M), optional
             The control point in case of using `cubic Bézier interpolator` when
             time exceeds this timestamp.
         post_cp: ndarray, shape (1, M), optional
             The control point in case of using `cubic Bézier interpolator` when
             time precedes this timestamp.
+        in_tangent: ndarray, shape (1, M), optional
+            The in tangent at that position for the cubic spline curve.
+        out_tangent: ndarray, shape (1, M), optional
+            The out tangent at that position for the cubic spline curve.
         """
-        typ = 'attribs'
-        if is_camera:
-            typ = 'camera'
-            self._is_camera_animated = True
 
-        keyframes = self._data.get('keyframes')
-        if attrib not in keyframes.get(typ):
-            keyframes.get(typ)[attrib] = {}
-        attrib_keyframes = self._data.get('keyframes').get(typ).get(attrib)
-        attrib_keyframes[timestamp] = {
-            'value': np.array(value).astype(np.float),
-            'pre_cp': pre_cp,
-            'post_cp': post_cp
+        attrib_data = self._get_attribute_data(attrib, is_camera=is_camera)
+        keyframes = attrib_data.get('keyframes')
+
+        keyframes[timestamp] = {
+            'value': np.array(value).astype(float),
+            **{par: np.array(val).astype(float) for par, val in kwargs.items()
+               if val is not None}
         }
-        interpolators = self._data.get('interpolators')
-        if attrib not in interpolators.get(typ):
-            interpolators.get(typ)[attrib] = \
-                LinearInterpolator(attrib_keyframes)
 
-        else:
-            interpolators.get(typ).get(attrib).setup()
+        if update_interpolator:
+            interp = attrib_data.get('interpolator')
+            interp_base = interp.get('base')
+            interp_args = interp.get('args')
+            new_interp = interp_base(keyframes, **interp_args)
+            interp['func'] = new_interp.interpolate
 
         if timestamp > self.final_timestamp:
             self._final_timestamp = timestamp
@@ -190,7 +230,9 @@ class Timeline(Container):
 
         if timestamp > 0:
             self.update_animation(force=True)
-        # self.update_motion_path()
+
+        # update motion path
+        self.update_motion_path()
 
     def set_keyframes(self, attrib, keyframes, is_camera=False):
         """Set multiple keyframes for a certain attribute.
@@ -206,19 +248,24 @@ class Timeline(Container):
 
         Notes
         ---------
-        Cubic Bézier curve control points are not supported yet in this setter.
+        Keyframes can be on any of the following forms:
+        >>> key_frames_simple = {1: [1, 2, 1], 2: [3, 4, 5]}
+        >>> key_frames_bezier = {1: {'value': [1, 2, 1]},
+        >>>                       2: {'value': [3, 4, 5], 'pre_cp': [1, 2, 3]}}
 
         Examples
         ---------
         >>> pos_keyframes = {1: np.array([1, 2, 3]), 3: np.array([5, 5, 5])}
         >>> Timeline.set_keyframes('position', pos_keyframes)
         """
-        for t in keyframes:
+        for t, data in keyframes.items():
             keyframe = keyframes.get(t)
-            self.set_keyframe(attrib, t, keyframe, is_camera=is_camera)
+            if isinstance(keyframe, dict):
+                self.set_keyframe(attrib, t, **keyframe, is_camera=is_camera)
+            else:
+                self.set_keyframe(attrib, t, keyframe, is_camera=is_camera)
 
-    def set_camera_keyframe(self, attrib, timestamp, value, pre_cp=None,
-                            post_cp=None):
+    def set_camera_keyframe(self, attrib, timestamp, value, **kwargs):
         """Set a keyframe for a camera property
 
         Parameters
@@ -229,14 +276,10 @@ class Timeline(Container):
             Timestamp of the keyframe.
         value: float
             Value of the keyframe at the given timestamp.
-        pre_cp: float
-            The control point in case of using `cubic Bézier interpolator` when
-            time exceeds this timestamp.
-        post_cp: float
-            The control point in case of using `cubic Bézier interpolator` when
-            time precedes this timestamp.
+        **kwargs: dict, optional
+            Additional keyword arguments passed to `set_keyframe`.
         """
-        self.set_keyframe(attrib, timestamp, value, pre_cp, post_cp, True)
+        self.set_keyframe(attrib, timestamp, value, is_camera=True, **kwargs)
 
     def is_inside_scene_at(self, timestamp):
         if self._remove_from_scene_time is not None and \
@@ -297,35 +340,53 @@ class Timeline(Container):
         self.set_keyframes(attrib, keyframes, is_camera=True)
 
     def set_interpolator(self, attrib, interpolator, is_camera=False,
-                         spline_degree=None):
+                         **kwargs):
         """Set keyframes interpolator for a certain property
 
         Parameters
         ----------
         attrib: str
             The name of the property.
-        interpolator: class
-            The interpolator to be used to interpolate keyframes.
+        interpolator: class or function
+            The interpolator class or evaluation function to be used to 
+            interpolate/evaluate keyframes.
         is_camera: bool, optional
             Indicated whether dealing with a camera property or general
             property.
+
+        Other Parameters
+        ----------------
         spline_degree: int, optional
             The degree of the spline in case of setting a spline interpolator.
+        
+        Notes
+        -----
+        If this evaluator is used to evaluate the value of actor's
+        properties such as position, scale, color, rotation, or opacity, it has
+        to return a value thathas the same shape as the evaluated property,
+        i.e.: for scale, it has to return an array with shape 1x3, and for
+        opacity, it has to return a 1x1, an int, or a float value.
 
         Examples
         ---------
         >>> Timeline.set_interpolator('position', LinearInterpolator)
+        
+        >>> pos_fun = lambda t: np.array([np.sin(t), np.cos(t), 0])
+        >>> Timeline.set_interpolator('position', pos_fun)
         """
-        typ = 'attribs'
-        if is_camera:
-            typ = 'camera'
-        if attrib in self._data.get('keyframes').get(typ):
-            keyframes = self._data.get('keyframes').get(typ).get(attrib)
-            if spline_degree is not None and interpolator is SplineInterpolator:
-                interp = interpolator(keyframes, spline_degree)
-            else:
-                interp = interpolator(keyframes)
-            self._data.get('interpolators').get(typ)[attrib] = interp
+
+        attrib_data = self._get_attribute_data(attrib, is_camera=is_camera)
+        keyframes = attrib_data.get('keyframes')
+        interp_data = attrib_data.get('interpolator')
+        if inspect.isfunction(interpolator):
+            interp_data['func'] = interpolator
+        else:
+            interp_data['base'] = interpolator
+            interp_data['args'] = kwargs
+            new_interp = interpolator(keyframes, **kwargs)
+            interp_data['func'] = new_interp.interpolate
+        # update motion path
+        self.update_motion_path()
 
     def is_interpolatable(self, attrib, is_camera=False):
         """Checks whether a property is interpolatable.
@@ -348,8 +409,8 @@ class Timeline(Container):
         specified property. And False means the opposite.
 
         """
-        typ = 'camera' if is_camera else 'attribs'
-        return attrib in self._data.get('interpolators').get(typ)
+        data = self._camera_data if is_camera else self._data
+        return attrib in data
 
     def set_camera_interpolator(self, attrib, interpolator):
         """Set the interpolator for a specific camera property.
@@ -360,9 +421,9 @@ class Timeline(Container):
             The name of the camera property.
             The already handled properties are position, focal, and view_up.
 
-        interpolator: class
-            The interpolator that handles the camera property interpolation
-            between keyframes.
+        interpolator: class or function
+            The interpolator class or evaluation function that handles the
+            camera property interpolation between keyframes.
 
         Examples
         ---------
@@ -370,25 +431,28 @@ class Timeline(Container):
         """
         self.set_interpolator(attrib, interpolator, is_camera=True)
 
-    def set_position_interpolator(self, interpolator, spline_degree=None):
+    def set_position_interpolator(self, interpolator, **kwargs):
         """Set the position interpolator for all actors inside the
         timeline.
 
         Parameters
         ----------
-        interpolator: class
-            The interpolator that would handle the position keyframes.
+        interpolator: class or function
+            The interpolator class or evaluation function that would handle the
+             position keyframes.
 
+        Other Parameters
+        ----------------
         spline_degree: int
             The degree of the spline interpolation in case of setting
             the `SplineInterpolator`.
 
         Examples
         ---------
-        >>> Timeline.set_position_interpolator(SplineInterpolator, 5)
+        >>> Timeline.set_position_interpolator(BSplineInterpolator,
+        >>>                                    spline_degree=5)
         """
-        self.set_interpolator('position', interpolator,
-                              spline_degree=spline_degree)
+        self.set_interpolator('position', interpolator, **kwargs)
 
     def set_scale_interpolator(self, interpolator):
         """Set the scale interpolator for all the actors inside the
@@ -396,8 +460,9 @@ class Timeline(Container):
 
         Parameters
         ----------
-        interpolator: class
-            TThe interpolator that would handle the scale keyframes.
+        interpolator: class or function
+            TThe interpolator class or evaluation function that would handle
+            the scale keyframes.
 
         Examples
         ---------
@@ -411,9 +476,9 @@ class Timeline(Container):
 
         Parameters
         ----------
-        interpolator: class
-            The interpolator that would handle the rotation (orientation)
-            keyframes.
+        interpolator: class or function
+            The interpolator class or evaluation function that would handle the
+            rotation (orientation) keyframes.
 
         Examples
         ---------
@@ -427,8 +492,9 @@ class Timeline(Container):
 
         Parameters
         ----------
-        interpolator: class
-            The interpolator that would handle the color keyframes.
+        interpolator: class or function
+            The interpolator class or evaluation function that would handle
+            the color keyframes.
 
         Examples
         ---------
@@ -442,8 +508,9 @@ class Timeline(Container):
 
         Parameters
         ----------
-        interpolator: class
-            The interpolator that would handle the opacity keyframes.
+        interpolator: class or function
+            The interpolator class or evaluation function that would handle
+            the opacity keyframes.
 
         Examples
         ---------
@@ -456,9 +523,9 @@ class Timeline(Container):
 
         Parameters
         ----------
-        interpolator: class
-            The interpolator that would handle the interpolation of the camera
-            position keyframes.
+        interpolator: class or function
+            The interpolator class or evaluation function that would handle the
+            interpolation of the camera position keyframes.
         """
         self.set_camera_interpolator("position", interpolator)
 
@@ -467,9 +534,9 @@ class Timeline(Container):
 
         Parameters
         ----------
-        interpolator: class
-            The interpolator that would handle the interpolation of the camera
-            focal position keyframes.
+        interpolator: class or function
+            The interpolator class or evaluation function that would handle the
+            interpolation of the camera focal position keyframes.
         """
         self.set_camera_interpolator("focal", interpolator)
 
@@ -483,8 +550,8 @@ class Timeline(Container):
         timestamp: float
             The timestamp to interpolate at.
         """
-        return self._data.get('interpolators').get('attribs').get(
-            attrib).interpolate(timestamp)
+        return self._data.get(attrib).get('interpolator').\
+            get('func')(timestamp)
 
     def get_camera_value(self, attrib, timestamp):
         """Returns the value of an attribute interpolated at any given
@@ -498,10 +565,10 @@ class Timeline(Container):
             The timestamp to interpolate at.
 
         """
-        return self._data.get('interpolators').get('camera').get(
-            attrib).interpolate(timestamp)
+        return self._camera_data.get(attrib).get('interpolator').\
+            get('func')(timestamp)
 
-    def set_position(self, timestamp, position, pre_cp=None, post_cp=None):
+    def set_position(self, timestamp, position, **kwargs):
         """Set a position keyframe at a specific timestamp.
 
         Parameters
@@ -510,17 +577,26 @@ class Timeline(Container):
             Timestamp of the keyframe
         position: ndarray, shape (1, 3)
             Position value
-        pre_cp: ndarray, shape (1, 3), optional
-            The pre control point for the given position.
-        post_cp: ndarray, shape (1, 3), optional
-            The post control point for the given position.
+
+        Other Parameters
+        ----------------
+        pre_cp: float
+            The control point in case of using `cubic Bézier interpolator` when
+            time exceeds this timestamp.
+        post_cp: float
+            The control point in case of using `cubic Bézier interpolator` when
+            time precedes this timestamp.
+        in_tangent: ndarray, shape (1, M), optional
+            The in tangent at that position for the cubic spline curve.
+        out_tangent: ndarray, shape (1, M), optional
+            The out tangent at that position for the cubic spline curve.
 
         Notes
         -----
         `pre_cp` and `post_cp` only needed when using the cubic bezier
         interpolation method.
         """
-        self.set_keyframe('position', timestamp, position, pre_cp, post_cp)
+        self.set_keyframe('position', timestamp, position, **kwargs)
 
     def set_position_keyframes(self, keyframes):
         """Set a dict of position keyframes at once.
@@ -539,7 +615,7 @@ class Timeline(Container):
         """
         self.set_keyframes('position', keyframes)
 
-    def set_rotation(self, timestamp, rotation, ):
+    def set_rotation(self, timestamp, rotation, **kwargs):
         """Set a rotation keyframe at a specific timestamp.
 
         Parameters
@@ -549,22 +625,28 @@ class Timeline(Container):
         rotation: ndarray, shape(1, 3) or shape(1, 4)
             Rotation data in euler degrees with shape(1, 3) or in quaternions
             with shape(1, 4).
+
+        Notes
+        -----
+        Euler rotations are executed by rotating first around Z then around X,
+        and finally around Y.
         """
         no_components = len(np.array(rotation).flatten())
         if no_components == 4:
-            self.set_keyframe('rotation', timestamp, rotation)
+            self.set_keyframe('rotation', timestamp, rotation, **kwargs)
         elif no_components == 3:
             # user is expected to set rotation order by default as setting
-            # orientation of a `vtkActor` z->x->y.
+            # orientation of a `vtkActor` ordered as z->x->y.
+            rotation = np.asarray(rotation, dtype=float)
             rotation = transform.Rotation.from_euler('zxy',
                                                      rotation[[2, 0, 1]],
                                                      degrees=True).as_quat()
-            self.set_keyframe('rotation', timestamp, rotation)
+            self.set_keyframe('rotation', timestamp, rotation, **kwargs)
         else:
             warnings.warn(f'Keyframe with {no_components} components is not a '
                           f'valid rotation data. Skipped!')
 
-    def set_rotation_as_vector(self, timestamp, vector):
+    def set_rotation_as_vector(self, timestamp, vector, **kwargs):
         """Set a rotation keyframe at a specific timestamp.
 
         Parameters
@@ -574,21 +656,20 @@ class Timeline(Container):
         vector: ndarray, shape(1, 3)
             Directional vector that describes the rotation.
         """
-        euler = transform.Rotation.from_rotvec(vector).as_euler('xyz', True)
-        self.set_keyframe('rotation', timestamp, euler)
+        quat = transform.Rotation.from_rotvec(vector).as_quat()
+        self.set_keyframe('rotation', timestamp, quat, **kwargs)
 
-    def set_scale(self, timestamp, scalar):
+    def set_scale(self, timestamp, scalar, **kwargs):
         """Set a scale keyframe at a specific timestamp.
 
         Parameters
         ----------
-        scalar
         timestamp: float
             Timestamp of the keyframe
         scalar: ndarray, shape(1, 3)
             Scale keyframe value associated with the timestamp.
         """
-        self.set_keyframe('scale', timestamp, scalar)
+        self.set_keyframe('scale', timestamp, scalar, **kwargs)
 
     def set_scale_keyframes(self, keyframes):
         """Set a dict of scale keyframes at once.
@@ -607,8 +688,17 @@ class Timeline(Container):
         """
         self.set_keyframes('scale', keyframes)
 
-    def set_color(self, timestamp, color):
-        self.set_keyframe('color', timestamp, color)
+    def set_color(self, timestamp, color, **kwargs):
+        """Set color keyframe at a specific timestamp.
+
+        Parameters
+        ----------
+        timestamp: float
+            Timestamp of the keyframe
+        color: ndarray, shape(1, 3)
+            Color keyframe value associated with the timestamp.
+        """
+        self.set_keyframe('color', timestamp, color, **kwargs)
 
     def set_color_keyframes(self, keyframes):
         """Set a dict of color keyframes at once.
@@ -627,9 +717,17 @@ class Timeline(Container):
         """
         self.set_keyframes('color', keyframes)
 
-    def set_opacity(self, timestamp, opacity):
-        """Value from 0 to 1"""
-        self.set_keyframe('opacity', timestamp, opacity)
+    def set_opacity(self, timestamp, opacity, **kwargs):
+        """Set opacity keyframe at a specific timestamp.
+
+        Parameters
+        ----------
+        timestamp: float
+            Timestamp of the keyframe
+        opacity: ndarray, shape(1, 3)
+            Opacity keyframe value associated with the timestamp.
+        """
+        self.set_keyframe('opacity', timestamp, opacity, **kwargs)
 
     def set_opacity_keyframes(self, keyframes):
         """Set a dict of opacity keyframes at once.
@@ -667,23 +765,33 @@ class Timeline(Container):
         """
         return self.get_value('position', t)
 
-    def get_rotation(self, t):
+    def get_rotation(self, t, as_quat=False):
         """Returns the interpolated rotation.
 
         Parameters
         ----------
         t: float
             the time to interpolate rotation at.
+        as_quat: bool
+            Returned rotation will be as quaternion if True.
 
         Returns
         -------
         ndarray(1, 3):
-            The interpolated rotation.
+            The interpolated rotation as Euler degrees by default.
         """
-        q = self.get_value('rotation', t)
-        r = transform.Rotation.from_quat(q)
-        degrees = r.as_euler('zxy', degrees=True)[[1, 2, 0]]
-        return degrees
+        rot = self.get_value('rotation', t)
+        if len(rot) == 4:
+            if as_quat:
+                return rot
+            r = transform.Rotation.from_quat(rot)
+            degrees = r.as_euler('zxy', degrees=True)[[1, 2, 0]]
+            return degrees
+        elif not as_quat:
+            return rot
+        return transform.Rotation.from_euler('zxy',
+                                             rot[[2, 0, 1]],
+                                             degrees=True).as_quat()
 
     def get_scale(self, t):
         """Returns the interpolated scale.
@@ -730,7 +838,7 @@ class Timeline(Container):
         """
         return self.get_value('opacity', t)
 
-    def set_camera_position(self, timestamp, position):
+    def set_camera_position(self, timestamp, position, **kwargs):
         """Sets the camera position keyframe.
 
         Parameters
@@ -740,9 +848,9 @@ class Timeline(Container):
         position: ndarray, shape(1, 3)
             The camera position
         """
-        self.set_camera_keyframe('position', timestamp, position)
+        self.set_camera_keyframe('position', timestamp, position, **kwargs)
 
-    def set_camera_focal(self, timestamp, position):
+    def set_camera_focal(self, timestamp, position, **kwargs):
         """Sets camera's focal position keyframe.
 
         Parameters
@@ -752,9 +860,9 @@ class Timeline(Container):
         position: ndarray, shape(1, 3)
             The camera position
         """
-        self.set_camera_keyframe('focal', timestamp, position)
+        self.set_camera_keyframe('focal', timestamp, position, **kwargs)
 
-    def set_camera_view_up(self, timestamp, direction):
+    def set_camera_view_up(self, timestamp, direction, **kwargs):
         """Sets the camera view-up direction keyframe.
 
         Parameters
@@ -764,19 +872,25 @@ class Timeline(Container):
         direction: ndarray, shape(1, 3)
             The camera view-up direction
         """
-        self.set_camera_keyframe('view_up', timestamp, direction)
+        self.set_camera_keyframe('view_up', timestamp, direction, **kwargs)
 
-    def set_camera_rotation(self, timestamp, euler):
+    def set_camera_rotation(self, timestamp, rotation, **kwargs):
         """Sets the camera rotation keyframe.
 
         Parameters
         ----------
         timestamp: float
             The time to interpolate at.
-        euler: ndarray, shape(1, 3)
-            The euler angles describing the camera rotation in degrees.
+        rotation: ndarray, shape(1, 3) or shape(1, 4)
+            Rotation data in euler degrees with shape(1, 3) or in quaternions
+            with shape(1, 4).
+
+        Notes
+        -----
+        Euler rotations are executed by rotating first around Z then around X,
+        and finally around Y.
         """
-        self.set_camera_keyframe('rotation', timestamp, euler)
+        self.set_rotation(timestamp, rotation, is_camera=True, **kwargs)
 
     def set_camera_position_keyframes(self, keyframes):
         """Set a dict of camera position keyframes at once.
@@ -946,6 +1060,8 @@ class Timeline(Container):
             for a in timeline:
                 self.add_timeline(a)
             return
+        timeline._parent_timeline = self
+        timeline.update_motion_path()
         self._timelines.append(timeline)
 
     def add_actor(self, actor, static=False):
@@ -968,6 +1084,10 @@ class Timeline(Container):
         else:
             actor.vcolors = utils.colors_from_actor(actor)
             super(Timeline, self).add(actor)
+
+    @property
+    def parent_timeline(self):
+        return self._parent_timeline
 
     @property
     def actors(self):
@@ -1060,9 +1180,8 @@ class Timeline(Container):
                     translation = np.identity(4)
                     translation[:3, 3] = pos
                     # camera axis is reverted
-                    rot = - self.get_camera_rotation(t)
-                    rot = transform.Rotation \
-                        .from_euler('xyz', rot, degrees=True).as_matrix()
+                    rot = -self.get_camera_rotation(t)
+                    rot = transform.Rotation.from_quat(rot).as_matrix()
                     rot = np.array([[*rot[0], 0],
                                     [*rot[1], 0],
                                     [*rot[2], 0],
@@ -1118,6 +1237,9 @@ class Timeline(Container):
                 # Also update all child Timelines.
             [tl.update_animation(t, force=True, _in_scene=in_scene)
              for tl in self.timelines]
+            # update clipping range
+            if self.parent_timeline is None and self._scene:
+                self._scene.reset_clipping_range()
 
     def play(self):
         """Play the animation"""
@@ -1303,8 +1425,8 @@ class Timeline(Container):
         super(Timeline, self).add_to_scene(ren)
         [ren.add(static_act) for static_act in self._static_actors]
         [ren.add(timeline) for timeline in self.timelines]
+        if self._motion_path_actor:
+            ren.add(self._motion_path_actor)
         self._scene = ren
         self._added_to_scene = True
         self.update_animation(force=True)
-        if self._motion_path_actor:
-            ren.add(self._motion_path_actor)
