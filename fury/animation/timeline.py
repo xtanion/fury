@@ -380,7 +380,7 @@ class Timeline(Container):
         interp_data = attrib_data.get('interpolator')
         if inspect.isfunction(interpolator):
             interp_data['func'] = interpolator
-        else:
+        elif  len(keyframes) > 1:
             interp_data['base'] = interpolator
             interp_data['args'] = kwargs
             new_interp = interpolator(keyframes, **kwargs)

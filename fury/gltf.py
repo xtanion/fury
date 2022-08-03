@@ -8,7 +8,8 @@ from fury.lib import Texture, Camera, Transform
 from fury import transform, utils, io
 from fury.animation.timeline import Timeline
 from fury.animation.interpolator import (LinearInterpolator, StepInterpolator,
-                                         CubicSplineInterpolator, Slerp)
+                                         CubicSplineInterpolator, Slerp,
+                                         Interpolator)
 
 comp_type = {
     5120: {'size': 1, 'dtype': np.byte},
@@ -95,6 +96,8 @@ class glTF:
             vtk_transform = Transform()
             vtk_transform.SetMatrix(utils.numpy_to_vtk_matrix(transform_mat))
             actor.SetUserTransform(vtk_transform)
+            utils.update_actor(actor)
+            utils.compute_bounds(actor)
 
             if self.materials[i] is not None:
                 base_col_tex = self.materials[i]['baseColorTexture']
@@ -530,13 +533,13 @@ class glTF:
                     for time, trs in zip(timestamp, transform):
                         if prop == 'rotation':
                             timeline.set_rotation(time[0], trs)
+                            timeline.set_rotation_interpolator(rot_interpolator)
                         if prop == 'translation':
                             timeline.set_position(time[0], trs)
+                            timeline.set_position_interpolator(interpolator)
                         if prop == 'scale':
                             timeline.set_scale(time[0], trs)
-                    timeline.set_position_interpolator(interpolator)
-                    timeline.set_scale_interpolator(interpolator)
-                    timeline.set_rotation_interpolator(rot_interpolator)
+                            timeline.set_scale_interpolator(interpolator)
                 else:
                     timeline.add_static_actor(actors[i])
 
@@ -551,3 +554,60 @@ class glTF:
         for timeline in timelines:
             main_timeline.add_timeline(timeline)
         return main_timeline
+
+
+class TanCubicSplineInterpolator(Interpolator):
+    def __init__(self, keyframes):
+        # The super init call is essential for setting up timestamps and
+        # storing the keyframes as a property.
+        super(TanCubicSplineInterpolator, self).__init__(keyframes)
+        # here we have keyframes as set using `Timeline.set_keyframe` or any
+        # other keyframe setter method.
+        # keyframes can be on the following form:
+        # {
+        # 1: {'value': ndarray, 'in_tangent': ndarray, 'out_tangent': ndarray},
+        # 2: {'value': np.array([1, 2, 3], 'in_tangent': ndarray},
+        # }
+        # See here, we might get incomplete data (out_tangent) in the second
+        # keyframe. In this case we need to have a default behaviour dealing
+        # with these missing data.
+        # Setting the tangent to a zero vector in this case is the best choice
+        for time in self.keyframes:
+            data = self.keyframes.get(time)
+            value = data.get('value')
+            if data.get('in_tangent') is None:
+                data['in_tangent'] = np.zeros_like(value)
+            if data.get('in_tangent') is None:
+                data['in_tangent'] = np.zeros_like(value)
+
+    def interpolate(self, t):
+        # `get_neighbour_timestamps` method takes time as input and returns
+        # the surrounding timestamps.
+        t0, t1 = self.get_neighbour_timestamps(t)
+
+        # `get_time_tau` static method takes current time and surrounding
+        # timestamps and returns a value from 0 to 1
+        dt = self.get_time_tau(t, t0, t1)
+
+        time_delta = t1 - t0
+
+        # to get a keyframe data at a specific timestamp, use
+        # `self.keyframes.get(t0)`. This keyframe data contains `value` and any
+        # other data set as a custom argument using keyframe setters.
+        # for example:
+        # >>> timeline = Timeline()
+        # >>> timeline.set_position(0, np.array([1, 1, 1]),
+        # >>>                       custom_field=np.array([2, 3, 1]))
+        # In this case `self.keyframes.get(0)` would return:
+        # {'value': array(1, 1, 1), 'custom_field': array(2, 3, 1)}
+        #
+        # now we continue with the cubic spline equation.
+        p0 = self.keyframes.get(t0).get('value')
+        tan_0 = self.keyframes.get(t0).get('out_tangent') * time_delta
+        p1 = self.keyframes.get(t1).get('value')
+        tan_1 = self.keyframes.get(t1).get('in_tangent') * time_delta
+        # cubic spline equation using tangents
+        t2 = dt * dt
+        t3 = t2 * dt
+        return (2 * t3 - 3 * t2 + 1) * p0 + (t3 - 2 * t2 + dt) * tan_0 + (
+                -2 * t3 + 3 * t2) * p1 + (t3 - t2) * tan_1
